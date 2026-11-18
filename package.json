@@ -46,6 +46,9 @@
     "node": ">=20"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1166.0",
+    "@aws-sdk/client-ssm": "^3.1166.0",
+    "@aws-sdk/s3-request-presigner": "^3.1166.0",
     "@modelcontextprotocol/sdk": "^1.6.1",
     "axios": "^1.7.9",
     "express": "^5.0.1",
