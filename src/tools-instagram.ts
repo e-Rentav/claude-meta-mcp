@@ -14,6 +14,7 @@ import { z } from "zod";
 import { MetaClient } from "./meta-client.js";
 import type { AssetStore } from "./lib/assets.js";
 import { chatgptFileSchema, FILE_PARAMS_META, downloadChatGptFile, storeBlob } from "./lib/files.js";
+import { buildAccountInsightsParams, buildMediaInsightsParams } from "./lib/ig-insights.js";
 
 function asJson(value: unknown): { content: { type: "text"; text: string }[] } {
   return {
@@ -115,30 +116,33 @@ export function registerInstagramTools(server: McpServer, meta: MetaClient, asse
     {
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
       description:
-        "Fetch insights metrics for an Instagram Business account (reach, impressions, profile_views, follower_count). " +
-        "Provide either a date_preset OR a since/until pair.",
+        "Fetch insights metrics for an Instagram Business account (default: reach, views as totals). " +
+        "Optionally pass a since/until pair. Instagram `impressions` was removed in Graph API v22.",
       inputSchema: {
         ig_user_id: z.string(),
         page_id: z.string().describe("Connected Facebook Page ID"),
         metrics: z
           .array(z.string())
           .optional()
-          .describe("Metric names. Default: reach, impressions, profile_views, follower_count"),
+          .describe("Metric names. Default: reach, views"),
         period: z.enum(["day", "week", "days_28"]).optional(),
+        metric_type: z
+          .enum(["time_series", "total_value"])
+          .optional()
+          .describe(
+            "total_value is required for views and most interaction metrics. " +
+              "Default: total_value when metrics is omitted, otherwise not sent."
+          ),
         since: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
         until: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
       },
     },
-    async ({ ig_user_id, page_id, metrics, period, since, until }) => {
+    async ({ ig_user_id, page_id, metrics, period, metric_type, since, until }) => {
       const pageToken = await meta.getPageAccessToken(page_id);
-      const params: Record<string, string | number> = {
+      const data = await meta.get(`/${ig_user_id}/insights`, {
         access_token: pageToken,
-        metric: (metrics ?? ["reach", "impressions", "profile_views", "follower_count"]).join(","),
-        period: period ?? "day",
-      };
-      if (since) params.since = since;
-      if (until) params.until = until;
-      const data = await meta.get(`/${ig_user_id}/insights`, params);
+        ...buildAccountInsightsParams({ metrics, period, metric_type, since, until }),
+      });
       return asJson(data);
     }
   );
@@ -147,18 +151,20 @@ export function registerInstagramTools(server: McpServer, meta: MetaClient, asse
     "get_instagram_post_insights",
     {
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
-      description: "Fetch per-post insights (engagement, reach, impressions, saves) for a single IG media item.",
+      description:
+        "Fetch per-post insights for a single IG media item (default: reach, views). " +
+        "Other valid metrics include saved, shares, likes, comments, total_interactions.",
       inputSchema: {
         media_id: z.string().describe("IG media item ID"),
         page_id: z.string().describe("Connected Page ID for token lookup"),
-        metrics: z.array(z.string()).optional().describe("Default: engagement, reach, impressions, saved"),
+        metrics: z.array(z.string()).optional().describe("Default: reach, views"),
       },
     },
     async ({ media_id, page_id, metrics }) => {
       const pageToken = await meta.getPageAccessToken(page_id);
       const data = await meta.get(`/${media_id}/insights`, {
         access_token: pageToken,
-        metric: (metrics ?? ["engagement", "reach", "impressions", "saved"]).join(","),
+        ...buildMediaInsightsParams(metrics),
       });
       return asJson(data);
     }
