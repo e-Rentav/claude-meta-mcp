@@ -8,6 +8,20 @@
 [![MCP](https://img.shields.io/badge/MCP-Streamable_HTTP-blue.svg)](https://modelcontextprotocol.io/)
 [![Status](https://img.shields.io/badge/status-v0.6_alpha-orange.svg)](./CHANGELOG.md)
 
+> **Fork e-Rentav (`erentav/main`).** Base: upstream `666e4ff` (v0.6.0 + 1 cosmetic commit).
+> Changes: optional secret in path (`ALLOW_PATH_SECRET`, default `false`), constant-time secret
+> comparison, one `McpServer` per request (fixes 500 "Already connected" on overlapping requests),
+> `TOOLSETS` allowlist, Instagram insights default to `reach,views`, dependencies updated with
+> `npm audit fix` (non-breaking, versions published ≥7 days before the update).
+>
+> **Pending security advisory — zod 3.25.76 (high, `zod <4.6.6`, memory exhaustion when validating
+> oversized constrained collections).** Not upgraded on purpose: the fix is zod 4 (major, breaking
+> for the tool schemas). Exposure is bounded by the 1 MB JSON body limit on `/mcp`, and every
+> request must authenticate first. Revisit when upgrading to zod 4. Check with `npm audit --omit=dev`.
+>
+> Target configuration for this fork: `TOOLSETS=pages,instagram`, `MAX_DAILY_BUDGET_CENTS=1`,
+> `MAX_LIFETIME_BUDGET_CENTS=1`, no `UPLOAD_DIR` (media go through S3).
+
 > **Status — v0.6.0 (single-tenant alpha).**
 > One Meta System User token, one shared Bearer secret, no database. Perfect for personal use or a single agency account. Multi-tenant + OAuth 2.1 + DCR are on the roadmap (see [Roadmap](#roadmap)).
 >
@@ -151,8 +165,8 @@ Files that did not come from a public URL are kept in the asset store (`UPLOAD_D
 |---|---|
 | `list_instagram_accounts` | List IG Business accounts linked to the managed Pages |
 | `list_instagram_posts` | List recent media on an IG account |
-| `get_instagram_insights` | Account-level metrics (reach, impressions, profile_views, …) |
-| `get_instagram_post_insights` | Per-post metrics (likes, saves, reach, plays for video/reels) |
+| `get_instagram_insights` | Account-level metrics (default: reach, views as totals; `impressions` was removed by Meta in v22) |
+| `get_instagram_post_insights` | Per-post metrics (default: reach, views; also saved, shares, likes, comments, total_interactions) |
 | `create_instagram_post` ⚠️ | Publish IMAGE / VIDEO / REELS / STORIES (2-phase: container + publish, with FINISHED-polling) |
 | `create_instagram_carousel` ⚠️ | Publish a 2–10-item carousel post |
 | `delete_instagram_media` ⚠️ | **Destructive** — delete an IG post / reel / story |
