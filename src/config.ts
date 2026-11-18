@@ -49,6 +49,13 @@ export const config = {
    * v0.2 will replace this with proper OAuth 2.1 + DCR.
    */
   authToken: required("AUTH_TOKEN"),
+  /**
+   * Also accept the secret as the last path segment (POST /mcp/<AUTH_TOKEN>),
+   * for clients that cannot send an Authorization header. Off by default.
+   */
+  allowPathSecret: optional("ALLOW_PATH_SECRET", "false").toLowerCase() === "true",
+  /** Comma-separated tool groups to expose (see src/lib/toolsets.ts). Empty = all tools. */
+  toolsets: optional("TOOLSETS", ""),
   publicUrl: optional("PUBLIC_URL", "http://localhost:3210"),
   /**
    * Hard budget caps in account-currency cents. Undefined = no cap. Enforced

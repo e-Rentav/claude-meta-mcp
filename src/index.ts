@@ -10,6 +10,7 @@
  * token. Multi-tenant + OAuth 2.1 + DCR is planned for v0.2.
  */
 
+import { createHash, timingSafeEqual } from "node:crypto";
 import express, { NextFunction, Request, Response } from "express";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -25,6 +26,7 @@ import { registerAudienceTools } from "./tools-audiences.js";
 import { registerAssetTools } from "./tools-assets.js";
 import { AssetStore } from "./lib/assets.js";
 import { registerUploadRoutes } from "./upload-page.js";
+import { parseToolsets, restrictTools } from "./lib/toolsets.js";
 
 const VERSION = "0.6.0";
 
@@ -45,13 +47,23 @@ function log(
   console.error(JSON.stringify(line));
 }
 
+const AUTH_DIGEST = createHash("sha256").update(config.authToken).digest();
+
+/** Constant-time comparison against AUTH_TOKEN (hashing first equalises lengths). */
+function secretMatches(candidate: string | undefined): boolean {
+  if (!candidate) return false;
+  return timingSafeEqual(createHash("sha256").update(candidate).digest(), AUTH_DIGEST);
+}
+
 function bearerAuth(req: Request, res: Response, next: NextFunction): void {
   const header = req.header("authorization") ?? "";
   const match = /^Bearer\s+(.+)$/i.exec(header);
-  if (!match || match[1] !== config.authToken) {
+  const pathSecret = typeof req.params?.secret === "string" ? req.params.secret : undefined;
+  if (!secretMatches(match?.[1]) && !(config.allowPathSecret && secretMatches(pathSecret))) {
+    // Never log req.path: with ALLOW_PATH_SECRET it would contain the (attempted) secret.
     log("warn", "rejected unauthenticated MCP request", {
       ip: req.ip,
-      path: req.path,
+      route: pathSecret === undefined ? "/mcp" : "/mcp/:secret",
     });
     res.status(401).json({
       error: "unauthorized",
@@ -67,16 +79,28 @@ async function main(): Promise<void> {
   const assets = config.upload.dir ? new AssetStore(config.upload.dir, config.publicUrl) : undefined;
   if (assets) await assets.init();
 
-  const mcp = new McpServer({
-    name: "claude-meta-mcp",
-    version: VERSION,
-  });
-  registerTools(mcp, meta);
-  registerWriteTools(mcp, meta, assets);
-  registerInstagramTools(mcp, meta, assets);
-  registerCatalogTools(mcp, meta);
-  registerAudienceTools(mcp, meta);
-  registerAssetTools(mcp, assets);
+  const allowedTools = parseToolsets(config.toolsets);
+  if (config.allowPathSecret && !/^[A-Za-z0-9_-]{32,}$/.test(config.authToken)) {
+    throw new Error("ALLOW_PATH_SECRET=true needs a URL-safe AUTH_TOKEN of 32+ chars (openssl rand -hex 32)");
+  }
+
+  // One McpServer per request: the SDK refuses to connect a server that is
+  // still attached to another transport, so a shared instance fails with
+  // "Already connected" whenever two requests overlap.
+  function buildMcpServer(): McpServer {
+    const mcp = new McpServer({
+      name: "claude-meta-mcp",
+      version: VERSION,
+    });
+    restrictTools(mcp, allowedTools);
+    registerTools(mcp, meta);
+    registerWriteTools(mcp, meta, assets);
+    registerInstagramTools(mcp, meta, assets);
+    registerCatalogTools(mcp, meta);
+    registerAudienceTools(mcp, meta);
+    registerAssetTools(mcp, assets);
+    return mcp;
+  }
 
   const app = express();
   app.disable("x-powered-by");
@@ -101,13 +125,25 @@ async function main(): Promise<void> {
     });
   }
 
-  app.post("/mcp", bearerAuth, async (req, res) => {
+  const mcpPaths = config.allowPathSecret ? ["/mcp", "/mcp/:secret"] : ["/mcp"];
+
+  // Stateless server: no standalone SSE stream and no sessions to delete.
+  app.get(mcpPaths, bearerAuth, (_req, res) => {
+    res.status(405).set("Allow", "POST").json({ error: "method_not_allowed" });
+  });
+  app.delete(mcpPaths, bearerAuth, (_req, res) => {
+    res.status(405).set("Allow", "POST").json({ error: "method_not_allowed" });
+  });
+
+  app.post(mcpPaths, bearerAuth, async (req, res) => {
+    const mcp = buildMcpServer();
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
       enableJsonResponse: true,
     });
     res.on("close", () => {
       transport.close().catch(() => {});
+      mcp.close().catch(() => {});
     });
     try {
       await mcp.connect(transport);
@@ -148,6 +184,8 @@ async function main(): Promise<void> {
       public_url: config.publicUrl,
       meta_api_version: config.meta.apiVersion,
       asset_store: assets ? config.upload.dir : null,
+      toolsets: config.toolsets || "all",
+      path_secret_enabled: config.allowPathSecret,
     });
   });
 }
