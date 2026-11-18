@@ -21,6 +21,17 @@
 >
 > Target configuration for this fork: `TOOLSETS=pages,instagram`, `MAX_DAILY_BUDGET_CENTS=1`,
 > `MAX_LIFETIME_BUDGET_CENTS=1`, no `UPLOAD_DIR` (media go through S3).
+>
+> **AWS deploy (this fork).** `template.yaml` (SAM: Lambda Node 22 arm64 + Lambda Web Adapter +
+> Function URL, private S3 media bucket, log group with 30-day retention). Secrets come from SSM
+> Parameter Store at runtime (`src/aws-entry.ts`, path `/erentav/meta-mcp`), never from the template
+> or the environment. IAM (execution + GitHub OIDC deploy roles) is created out of band with
+> `infra/fase1-iam-cloudshell.sh`, whose pre-flight checks the deploy policy against the CloudFormation
+> handler permissions. Deploys run only from `.github/workflows/deploy.yml` (manual, environment
+> `aws-prod` with a required reviewer), after `scripts/check-template.py` confirms the template still
+> matches what the deploy role covers. New tools: `list_media` (files in the media bucket) and
+> `publish_instagram_container` (finish a video/carousel that was still processing); the publish
+> tools accept `s3_key`.
 
 > **Status — v0.6.0 (single-tenant alpha).**
 > One Meta System User token, one shared Bearer secret, no database. Perfect for personal use or a single agency account. Multi-tenant + OAuth 2.1 + DCR are on the roadmap (see [Roadmap](#roadmap)).
@@ -167,6 +178,8 @@ Files that did not come from a public URL are kept in the asset store (`UPLOAD_D
 | `list_instagram_posts` | List recent media on an IG account |
 | `get_instagram_insights` | Account-level metrics (default: reach, views as totals; `impressions` was removed by Meta in v22) |
 | `get_instagram_post_insights` | Per-post metrics (default: reach, views; also saved, shares, likes, comments, total_interactions) |
+| `publish_instagram_container` | Fork: finish a video/reel/carousel publish that returned `processing` |
+| `list_media` | Fork: list files in the private S3 media bucket (`MEDIA_BUCKET`), for `s3_key` |
 | `create_instagram_post` ⚠️ | Publish IMAGE / VIDEO / REELS / STORIES (2-phase: container + publish, with FINISHED-polling) |
 | `create_instagram_carousel` ⚠️ | Publish a 2–10-item carousel post |
 | `delete_instagram_media` ⚠️ | **Destructive** — delete an IG post / reel / story |

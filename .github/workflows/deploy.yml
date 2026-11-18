@@ -1,0 +1,108 @@
+# Deploy erentav-meta-mcp (SAM: Lambda + Function URL) to AWS us-east-2.
+#
+# Manual only: Actions → deploy → Run workflow (branch erentav/main).
+# The job runs in the "aws-prod" environment, which must exist BEFORE the first
+# run with a required reviewer: GitHub creates a missing environment on the fly
+# WITHOUT protection rules. The deploy role trusts only this environment.
+#
+# Third-party actions are pinned to full commit SHAs (tag in the comment).
+name: deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      allow_path_secret:
+        description: "Accept the secret in the path (/mcp/<secret>) as well as the Authorization header"
+        type: choice
+        options: ["false", "true"]
+        default: "false"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-erentav-meta-mcp
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-2
+  STACK_NAME: erentav-meta-mcp
+  ARTIFACTS_BUCKET: erentav-meta-mcp-artifacts-010928221211
+  DEPLOY_ROLE_ARN: arn:aws:iam::010928221211:role/erentav-meta-mcp-deploy
+  SAM_CLI_VERSION: 1.171.0
+
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/erentav/main'
+    runs-on: ubuntu-24.04
+    environment: aws-prod
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Template guard (must match what the deploy role was checked for)
+        run: python3 scripts/check-template.py template.yaml
+
+      - name: Setup Node 22
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+
+      - name: Install, test
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm test
+
+      - name: Build Lambda package (.aws-sam-package/)
+        run: bash scripts/package-lambda.sh
+
+      - name: AWS credentials (OIDC, no stored keys)
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ env.DEPLOY_ROLE_ARN }}
+          role-session-name: gha-erentav-meta-mcp-${{ github.run_id }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup SAM CLI
+        uses: aws-actions/setup-sam@341eee193f458fa5aae5d52c94b0c5cf3a1c5a52 # v3
+        with:
+          version: ${{ env.SAM_CLI_VERSION }}
+
+      - name: sam deploy
+        env:
+          ALLOW_PATH_SECRET: ${{ inputs.allow_path_secret }}
+        run: |
+          sam deploy \
+            --template-file template.yaml \
+            --stack-name "${STACK_NAME}" \
+            --region "${AWS_REGION}" \
+            --s3-bucket "${ARTIFACTS_BUCKET}" \
+            --s3-prefix sam \
+            --no-confirm-changeset \
+            --no-fail-on-empty-changeset \
+            --no-progressbar \
+            --parameter-overrides "AllowPathSecret=${ALLOW_PATH_SECRET}" "ReservedConcurrency=0"
+
+      - name: Outputs and /health
+        run: |
+          URL=$(aws cloudformation describe-stacks --stack-name "${STACK_NAME}" \
+            --query "Stacks[0].Outputs[?OutputKey=='FunctionUrl'].OutputValue" --output text)
+          echo "Function URL: ${URL}"
+          {
+            echo "### erentav-meta-mcp"
+            echo "- Function URL: \`${URL}\`"
+            echo "- MCP endpoint: \`${URL%/}/mcp\` (secret via Authorization header or path, never in this log)"
+          } >> "${GITHUB_STEP_SUMMARY}"
+          # /health needs no secret. A failure here usually means the SSM parameters are missing.
+          for i in 1 2 3; do
+            if curl -fsS --max-time 60 "${URL%/}/health"; then echo; exit 0; fi
+            echo "health attempt ${i} failed; retrying in 10s"; sleep 10
+          done
+          echo "::error::/health failed. Check /erentav/meta-mcp/{META_ACCESS_TOKEN,AUTH_TOKEN} in SSM and the log group /aws/lambda/erentav-meta-mcp."
+          exit 1

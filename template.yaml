@@ -1,0 +1,138 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  erentav-meta-mcp — claude-meta-mcp (fork e-Rentav) on Lambda + Function URL.
+  No IAM resources here: the execution role is created out of band (Fase 1 script).
+  Intentionally NOT used: AutoPublishAlias, DeploymentPreference, EventInvokeConfig,
+  Events, FunctionUrlConfig (the URL and its two permissions are explicit below).
+
+Parameters:
+  ExecRoleArn:
+    Type: String
+    Default: arn:aws:iam::010928221211:role/erentav-meta-mcp-lambda
+  ReservedConcurrency:
+    Type: Number
+    Default: 0
+    MinValue: 0
+    Description: 0 = no reservation. Only set >0 if the account concurrency limit is >= 1000.
+  AllowPathSecret:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+  WebAdapterLayerArn:
+    Type: String
+    Default: arn:aws:lambda:us-east-2:753240598075:layer:LambdaAdapterLayerArm64:30
+
+Conditions:
+  ReserveConcurrency: !Not [!Equals [!Ref ReservedConcurrency, 0]]
+
+Resources:
+  MediaBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub erentav-meta-mcp-media-${AWS::AccountId}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-inbox
+            Status: Enabled
+            Prefix: inbox/
+            ExpirationInDays: 30
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 1
+      Tags:
+        - Key: Project
+          Value: erentav-meta-mcp
+
+  FunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: /aws/lambda/erentav-meta-mcp
+      RetentionInDays: 30
+      Tags:
+        - Key: Project
+          Value: erentav-meta-mcp
+
+  McpFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: erentav-meta-mcp
+      Description: claude-meta-mcp (pages + instagram) behind a Function URL
+      Role: !Ref ExecRoleArn
+      Runtime: nodejs22.x
+      Architectures: [arm64]
+      CodeUri: .aws-sam-package/
+      Handler: run.sh
+      MemorySize: 512
+      Timeout: 270
+      ReservedConcurrentExecutions: !If [ReserveConcurrency, !Ref ReservedConcurrency, !Ref AWS::NoValue]
+      Layers:
+        - !Ref WebAdapterLayerArn
+      LoggingConfig:
+        LogGroup: !Ref FunctionLogGroup
+        LogFormat: Text
+      Environment:
+        Variables:
+          AWS_LAMBDA_EXEC_WRAPPER: /opt/bootstrap
+          AWS_LWA_PORT: "8080"
+          AWS_LWA_READINESS_CHECK_PATH: /health
+          PORT: "8080"
+          HOST: 127.0.0.1
+          LOG_LEVEL: info
+          META_API_VERSION: v26.0
+          SSM_PARAMETER_PATH: /erentav/meta-mcp
+          TOOLSETS: pages,instagram
+          ALLOW_PATH_SECRET: !Ref AllowPathSecret
+          MAX_DAILY_BUDGET_CENTS: "1"
+          MAX_LIFETIME_BUDGET_CENTS: "1"
+          MEDIA_BUCKET: !Ref MediaBucket
+          MEDIA_PREFIX: inbox/
+          MEDIA_URL_TTL_SECONDS: "3600"
+          IG_CONTAINER_MAX_WAIT_SECONDS: "150"
+      Tags:
+        Project: erentav-meta-mcp
+
+  McpFunctionUrl:
+    Type: AWS::Lambda::Url
+    Properties:
+      TargetFunctionArn: !GetAtt McpFunction.Arn
+      AuthType: NONE
+      InvokeMode: BUFFERED
+
+  # Since October 2025 a public Function URL needs BOTH permissions.
+  McpFunctionUrlInvokeUrlPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref McpFunction
+      Action: lambda:InvokeFunctionUrl
+      Principal: "*"
+      FunctionUrlAuthType: NONE
+
+  McpFunctionUrlInvokeFunctionPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref McpFunction
+      Action: lambda:InvokeFunction
+      Principal: "*"
+      InvokedViaFunctionUrl: true
+
+Outputs:
+  FunctionUrl:
+    Value: !GetAtt McpFunctionUrl.FunctionUrl
+  MediaBucketName:
+    Value: !Ref MediaBucket

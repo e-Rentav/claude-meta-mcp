@@ -8,3 +8,5 @@ dist/
 .vscode/
 coverage/
 *.tsbuildinfo
+.aws-sam-package/
+.aws-sam/
