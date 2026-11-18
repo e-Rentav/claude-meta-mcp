@@ -20,6 +20,16 @@ function optional(name: string, fallback: string): string {
   return value && value.trim() !== "" ? value : fallback;
 }
 
+function boundedInt(name: string, fallback: number, min: number, max: number): number {
+  const raw = process.env[name];
+  if (!raw || raw.trim() === "") return fallback;
+  const n = parseInt(raw, 10);
+  if (!Number.isFinite(n) || n < min || n > max) {
+    throw new Error(`${name} must be an integer between ${min} and ${max}, got "${raw}"`);
+  }
+  return n;
+}
+
 function optionalInt(name: string): number | undefined {
   const value = process.env[name];
   if (!value || value.trim() === "") return undefined;
@@ -76,6 +86,22 @@ export const config = {
     maxMb: optionalInt("UPLOAD_MAX_MB") ?? 100,
     pageLang: (optional("UPLOAD_PAGE_LANG", "en") === "de" ? "de" : "en") as "en" | "de",
   },
+  /**
+   * Private S3 bucket for Instagram media. Enabled when MEDIA_BUCKET is set:
+   * list_media lists MEDIA_PREFIX, and the publish tools accept `s3_key`,
+   * turned into a pre-signed GET URL (MEDIA_URL_TTL_SECONDS) for Meta to fetch.
+   */
+  media: {
+    bucket: process.env.MEDIA_BUCKET && process.env.MEDIA_BUCKET.trim() !== "" ? process.env.MEDIA_BUCKET.trim() : undefined,
+    prefix: optional("MEDIA_PREFIX", "inbox/"),
+    urlTtlSeconds: boundedInt("MEDIA_URL_TTL_SECONDS", 3600, 300, 43_200),
+  },
+  /**
+   * How long the publish tools wait for an Instagram video container to finish
+   * processing before returning its container_id (publish later with
+   * publish_instagram_container). Keep well under the client and Lambda timeouts.
+   */
+  igContainerMaxWaitSeconds: boundedInt("IG_CONTAINER_MAX_WAIT_SECONDS", 90, 5, 240),
 } as const;
 
 export type Config = typeof config;

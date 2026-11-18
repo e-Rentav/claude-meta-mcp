@@ -14,6 +14,7 @@ export const TOOLSET_GROUPS: Record<string, readonly string[]> = {
     "list_instagram_accounts", "list_instagram_posts", "get_instagram_insights", "get_instagram_post_insights",
     "create_instagram_post", "create_instagram_carousel", "delete_instagram_media",
     "list_instagram_comments", "reply_instagram_comment", "delete_instagram_comment", "hide_instagram_comment",
+    "publish_instagram_container", "list_media",
   ],
   ads_read: [
     "list_ad_accounts", "get_ad_account", "list_campaigns", "get_campaign", "list_adsets", "list_ads",

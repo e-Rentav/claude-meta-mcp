@@ -27,6 +27,7 @@ import { registerAssetTools } from "./tools-assets.js";
 import { AssetStore } from "./lib/assets.js";
 import { registerUploadRoutes } from "./upload-page.js";
 import { parseToolsets, restrictTools } from "./lib/toolsets.js";
+import { createS3MediaStore } from "./lib/media-s3.js";
 
 const VERSION = "0.6.0";
 
@@ -77,6 +78,9 @@ function bearerAuth(req: Request, res: Response, next: NextFunction): void {
 async function main(): Promise<void> {
   const meta = new MetaClient(config.meta.accessToken, config.meta.apiVersion);
   const assets = config.upload.dir ? new AssetStore(config.upload.dir, config.publicUrl) : undefined;
+  const media = config.media.bucket
+    ? createS3MediaStore(config.media.bucket, config.media.prefix, config.media.urlTtlSeconds)
+    : undefined;
   if (assets) await assets.init();
 
   const allowedTools = parseToolsets(config.toolsets);
@@ -95,7 +99,10 @@ async function main(): Promise<void> {
     restrictTools(mcp, allowedTools);
     registerTools(mcp, meta);
     registerWriteTools(mcp, meta, assets);
-    registerInstagramTools(mcp, meta, assets);
+    registerInstagramTools(mcp, meta, assets, {
+      media,
+      containerMaxWaitSeconds: config.igContainerMaxWaitSeconds,
+    });
     registerCatalogTools(mcp, meta);
     registerAudienceTools(mcp, meta);
     registerAssetTools(mcp, assets);
@@ -186,6 +193,8 @@ async function main(): Promise<void> {
       asset_store: assets ? config.upload.dir : null,
       toolsets: config.toolsets || "all",
       path_secret_enabled: config.allowPathSecret,
+      media_bucket_configured: Boolean(media),
+      ig_container_max_wait_s: config.igContainerMaxWaitSeconds,
     });
   });
 }
